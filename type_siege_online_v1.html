@@ -1141,7 +1141,7 @@ function newWizard(side, x, y, charName){
            allyDmgBuffTimer:0, allyDmgBuffMult:1, hotTimer:0, hotRate:0, dotTimer:0, dotRate:0,
            stacks:0, markedTimer:0, markedBonus:1, targetLock:null, isWizard:true, slot:1,
            comboCount:0, comboTimer:0, autoAtkCd: AUTO_ATK_INTERVAL*0.5,
-           lastSkillCast:null, repeatStreak:0 };
+           lastSkillCast:null, repeatStreak:0, renderX:x, renderY:y };
 }
 
 // ==================== 평타 (자동 기본 공격) ====================
@@ -1852,6 +1852,7 @@ function blink(wizard){
     afterimages.push({ x: wizard.x + (pick.x-wizard.x)*t, y: wizard.y + (pick.y-wizard.y)*t, life: 0.25, side: wizard.side });
   }
   wizard.x = pick.x; wizard.y = pick.y;
+  wizard.renderX = pick.x; wizard.renderY = pick.y; // 블링크는 순간이동이라 슬라이드 없이 즉시 스냅
   beep(660, 0.08, 'sine', 0.06);
 }
 
@@ -1861,7 +1862,7 @@ function updateRespawn(w, dt){
   w.respawnTimer -= dt;
   if(w.respawnTimer <= 0){
     w.hp = w.maxHp; w.mana = w.maxMana*0.5; w.alive = true;
-    w.x = w.homeX; w.y = w.homeY; w.frozenTimer = 0;
+    w.x = w.homeX; w.y = w.homeY; w.renderX = w.homeX; w.renderY = w.homeY; w.frozenTimer = 0;
     log(`${w.side===mySideLetter?'내가':'상대가'} 리스폰함`);
   }
 }
@@ -2380,7 +2381,7 @@ function doReset(){
   rings = []; dmgNumbers = []; slashes = []; koBanner = null;
   allWizards().forEach(w=>{
     w.hp = w.maxHp; w.mana = w.maxMana*0.5; w.alive = true; w.respawnTimer = 0;
-    w.cooldowns = {}; w.x = w.homeX; w.y = w.homeY; w.frozenTimer = 0;
+    w.cooldowns = {}; w.x = w.homeX; w.y = w.homeY; w.renderX = w.homeX; w.renderY = w.homeY; w.frozenTimer = 0;
     w.parryTimer = 0; w.parryReduce = 0.7; w.shieldTimer = 0; w.channeling = false; w.channelTimer = 0;
     w.dmgReduceTimer = 0; w.dmgReduceMult = 1; w.tauntTimer = 0; w.stealthTimer = 0; w.blinkLockTimer = 0;
     w.manaRegenTimer = 0; w.manaRegenMult = 1; w.hasteTimer = 0; w.hasteMult = 1;
@@ -3064,6 +3065,19 @@ function render(){
   });
 
   allWizards().forEach(w=>{
+    // 렌더 위치를 실제 위치 쪽으로 부드럽게 보간 — 70px씩 뚝뚝 끊기던 순간이동 걸음을 매끄러운 슬라이드로 바꿈
+    // (블링크/리스폰/라운드 리셋 때는 renderX/Y를 즉시 스냅시켜뒀으므로 거기선 여전히 "순간이동"처럼 보임)
+    if(w.renderX===undefined) w.renderX = w.x;
+    if(w.renderY===undefined) w.renderY = w.y;
+    w.renderX += (w.x - w.renderX) * 0.28;
+    w.renderY += (w.y - w.renderY) * 0.28;
+    // 가만히 있어도 살짝 위아래로 흔들려서 생동감을 줌 (죽어있는 동안은 흔들지 않음)
+    const bob = w.alive ? Math.sin(performance.now()/380 + w.x*0.6) * 2 : 0;
+    const rx = w.renderX, ry = w.renderY + bob;
+    // 가장 가까운 적/타겟을 바라보도록 스프라이트를 좌우 반전 (전투가 훨씬 살아있는 느낌이 남)
+    const facing = w.alive ? nearestEnemyTarget(w) : null;
+    const flip = facing ? (facing.x < rx ? -1 : 1) : (w.side==='A' ? 1 : -1);
+
     if(!w.alive) ctx.globalAlpha = 0.25;
     else if(w.stealthTimer>0) ctx.globalAlpha = 0.4;
     const bodyColor = w.flash>0 ? '#ffffff' : (w.frozenTimer>0 ? '#6fd3ff' : sideColor(w.side));
@@ -3072,7 +3086,7 @@ function render(){
     // 그림자
     ctx.globalAlpha = baseAlpha * 0.35;
     ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.ellipse(w.x, w.y+19, 15, 5.5, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(rx, ry+19, 15, 5.5, 0, 0, 7); ctx.fill();
     ctx.globalAlpha = baseAlpha;
 
     // 캐릭터 스프라이트 (CC0 에셋팩) — 로드 전이면 치비 도형으로 폴백
@@ -3080,11 +3094,14 @@ function render(){
     if(wizSprite){
       ctx.shadowBlur = 16; ctx.shadowColor = bodyColor;
       const dh = 40, dw = dh * wizSprite.width / wizSprite.height;
-      ctx.drawImage(wizSprite, w.x-dw/2, w.y+17-dh, dw, dh);
+      ctx.save();
+      if(flip===-1){ ctx.translate(rx, 0); ctx.scale(-1,1); ctx.translate(-rx, 0); }
+      ctx.drawImage(wizSprite, rx-dw/2, ry+17-dh, dw, dh);
+      ctx.restore();
       ctx.shadowBlur = 0;
       // 소속 진영 색 링 (스프라이트만으론 구분이 안 되므로 발밑에 표시)
       ctx.strokeStyle = bodyColor; ctx.lineWidth = 2.5; ctx.globalAlpha = baseAlpha*0.9;
-      ctx.beginPath(); ctx.ellipse(w.x, w.y+17, 14, 4.5, 0, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(rx, ry+17, 14, 4.5, 0, 0, 7); ctx.stroke();
       ctx.globalAlpha = baseAlpha;
     } else {
       // 몸통 (치비 비율 사다리꼴) + 굵은 윤곽선 + 네온 글로우
@@ -3092,44 +3109,44 @@ function render(){
       ctx.fillStyle = bodyColor;
       ctx.strokeStyle = '#141414'; ctx.lineWidth = 3; ctx.lineJoin = 'round';
       ctx.beginPath();
-      ctx.moveTo(w.x-10, w.y+17); ctx.lineTo(w.x+10, w.y+17);
-      ctx.lineTo(w.x+7, w.y+1); ctx.lineTo(w.x-7, w.y+1);
+      ctx.moveTo(rx-10, ry+17); ctx.lineTo(rx+10, ry+17);
+      ctx.lineTo(rx+7, ry+1); ctx.lineTo(rx-7, ry+1);
       ctx.closePath(); ctx.fill(); ctx.stroke();
 
       // 머리 (큰 원)
-      ctx.beginPath(); ctx.arc(w.x, w.y-9, 14, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx, ry-9, 14, 0, 7); ctx.fill(); ctx.stroke();
       ctx.shadowBlur = 0;
-      // 머리 하이라이트
+      // 머리 하이라이트 (반전 방향에 맞춰 좌우로 같이 옮김)
       ctx.globalAlpha = baseAlpha * 0.4;
       ctx.fillStyle = '#ffffff';
-      ctx.beginPath(); ctx.arc(w.x-5, w.y-13, 4, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(rx-5*flip, ry-13, 4, 0, 7); ctx.fill();
       ctx.globalAlpha = baseAlpha;
     }
 
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign='center';
     ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
     const label = nickForWizard(w);
-    ctx.strokeText(label, w.x, w.y+33);
-    ctx.fillText(label, w.x, w.y+33);
+    ctx.strokeText(label, rx, ry+33);
+    ctx.fillText(label, rx, ry+33);
     if(w.frozenTimer>0){
       ctx.strokeStyle = '#bfe9ff'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.arc(w.x,w.y,27,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx,ry,27,0,7); ctx.stroke();
     }
     if(w.shieldTimer>0){
       ctx.strokeStyle = '#88ffcc'; ctx.lineWidth=3; ctx.globalAlpha=0.8;
-      ctx.beginPath(); ctx.arc(w.x,w.y,30,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx,ry,30,0,7); ctx.stroke();
     }
     if(w.parryTimer>0){
       ctx.strokeStyle = '#ffe066'; ctx.lineWidth=2; ctx.globalAlpha=0.9;
-      ctx.beginPath(); ctx.arc(w.x,w.y,24,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx,ry,24,0,7); ctx.stroke();
     }
     if(w.channeling){
       ctx.strokeStyle = '#ff9944'; ctx.lineWidth=3; ctx.globalAlpha=0.7+Math.sin(performance.now()/100)*0.2;
-      ctx.beginPath(); ctx.arc(w.x,w.y,25,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx,ry,25,0,7); ctx.stroke();
     }
     if(w.dmgReduceTimer>0){
       ctx.strokeStyle = '#ffaa44'; ctx.lineWidth=2; ctx.globalAlpha=0.7;
-      ctx.beginPath(); ctx.arc(w.x,w.y,32,0,7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(rx,ry,32,0,7); ctx.stroke();
     }
     ctx.globalAlpha = 1;
   });
