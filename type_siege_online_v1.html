@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>TYPE&SIEGE — 온라인 대전 프로토타입 (베타 · 15직업)</title>
 <script src="https://unpkg.com/peerjs@1/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -580,6 +581,12 @@ function dedupeNickname(nick, excludeSlot){
 function readNickname(){
   const v = sanitizeNickname(document.getElementById('nicknameInput').value.trim());
   myNickname = v || 'Player';
+  // 서버 동기화는 비동기로 백그라운드에서 진행 — 방 만들기/참가하기 등은 로컬 닉네임으로 그대로 즉시 진행됨
+  if(v){
+    syncNicknameToServer(v).then(ok=>{
+      if(!ok) log('⚠️ "'+v+'"은(는) 이미 다른 계정이 쓰는 닉네임이에요 — 이번 판은 로컬 닉네임으로 진행됩니다.');
+    });
+  }
 }
 
 function hostRoom(mode, attempt){
@@ -996,6 +1003,8 @@ function loadLifetimeStats(){
 }
 function saveLifetimeStats(s){ try{ localStorage.setItem(LIFETIME_STATS_KEY, JSON.stringify(s)); }catch(e){} }
 function recordMatchResult(won, myCombo, charName){
+  // 로컬(localStorage) 캐시는 기존처럼 동기적으로 즉시 갱신해서 배너/화면이 그대로 작동하게 하고,
+  // 서버 기록은 비동기(fire-and-forget)로 별도 남김 — 서버가 느리거나 실패해도 로컬 기록엔 영향 없음.
   const s = loadLifetimeStats();
   s.matches = (s.matches||0) + 1;
   if(won) s.wins = (s.wins||0) + 1;
@@ -1003,6 +1012,7 @@ function recordMatchResult(won, myCombo, charName){
   s.charPlays = s.charPlays || {};
   if(charName) s.charPlays[charName] = (s.charPlays[charName]||0) + 1;
   saveLifetimeStats(s);
+  recordMatchResultToServer(won, myCombo, charName);
   return s;
 }
 function favoriteCharFrom(charPlays){
@@ -1019,6 +1029,114 @@ function renderLifetimeStatsBox(){
   el.textContent = `총 ${s.matches}판 ${s.wins}승 · 최고 콤보 x${s.bestCombo||0}` + (fav ? ` · 자주 쓴 캐릭터: ${fav}` : '');
 }
 renderLifetimeStatsBox(); // 홈 화면 로드 시 바로 표시
+
+// ==================== Supabase 백엔드 연동 (계정/서버 기록) ====================
+// 익명 로그인으로 마찰 없이 바로 플레이 가능하게 하되, 서버에 진짜 계정(uuid)이 생겨서
+// 랭킹/매치메이킹 등을 나중에 얹을 수 있는 기반이 됨. Supabase가 응답 없거나(오프라인 등) 실패해도
+// 게임 자체(P2P 대전)는 그대로 동작해야 하므로 모든 호출을 try/catch로 감싸고 실패를 조용히 무시함.
+const SUPABASE_URL = 'https://wsejlnqfjbvjtzpgqnyy.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_l0wEvRVKyxZ_BLTgjT5wog_a-ZUq7Ny';
+let sb = null;
+try{
+  if(window.supabase && window.supabase.createClient){
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+  }
+}catch(e){ sb = null; }
+
+let myAccountId = null; // 로그인된 계정의 uuid (auth.users.id). 서버 연동 실패 시 null로 남고 로컬 전용으로 동작.
+let myServerNickname = null; // 서버(profiles)에 이미 저장된 닉네임 — 있으면 계정이 "잠긴" 상태
+let ensureAccountPromise = null;
+
+function ensureAccount(){
+  if(!sb) return Promise.resolve(null);
+  if(myAccountId) return Promise.resolve(myAccountId);
+  if(ensureAccountPromise) return ensureAccountPromise;
+  ensureAccountPromise = (async ()=>{
+    try{
+      const { data: { session } } = await sb.auth.getSession();
+      if(session && session.user){
+        myAccountId = session.user.id;
+      } else {
+        const { data, error } = await sb.auth.signInAnonymously();
+        if(error) throw error;
+        myAccountId = data.user.id;
+      }
+      await loadServerProfile();
+    }catch(e){ /* 오프라인/서버 문제 — 로컬 전용 모드로 계속 진행 */ }
+    return myAccountId;
+  })();
+  return ensureAccountPromise;
+}
+
+async function loadServerProfile(){
+  if(!sb || !myAccountId) return;
+  try{
+    const { data, error } = await sb.from('profiles').select('nickname, mmr').eq('id', myAccountId).maybeSingle();
+    if(!error && data){
+      myServerNickname = data.nickname;
+      // 이미 계정에 닉네임이 저장돼 있으면 입력창에 채워줘서 매번 새로 고를 필요 없게 함
+      const nickInput = document.getElementById('nicknameInput');
+      if(nickInput && !nickInput.value) nickInput.value = data.nickname;
+    }
+    await syncServerStatsToLocalCache();
+  }catch(e){}
+}
+
+// 처음 닉네임을 정할 때(또는 바꿀 때) 서버 profiles에도 반영. 같은 방 안 중복은 기존 dedupeNickname()이
+// 이미 처리하므로, 여긴 계정 간 전역 중복만 신경씀 — DB의 UNIQUE 제약이 최종 방어선.
+async function syncNicknameToServer(nickname){
+  if(!sb) return true;
+  await ensureAccount();
+  if(!myAccountId) return true; // 서버 연동 자체가 안 되면(오프라인 등) 로컬 닉네임만으로 계속 진행
+  if(myServerNickname === nickname) return true;
+  try{
+    const { error } = await sb.from('profiles').upsert({ id: myAccountId, nickname }, { onConflict: 'id' });
+    if(error){
+      if(error.code === '23505' || String(error.message||'').includes('duplicate')){
+        return false; // 이미 다른 계정이 쓰는 닉네임
+      }
+      return true; // 그 외 서버 오류는 무시하고 로컬로 계속 진행
+    }
+    myServerNickname = nickname;
+    return true;
+  }catch(e){ return true; }
+}
+
+// 서버(match_history/character_mastery)에서 최신 누적 기록을 가져와 로컬 캐시(localStorage)에 덮어써서
+// 다른 기기/브라우저에서 로그인해도(같은 익명 세션이 유지되는 한) 실제 전적이 바로 보이게 함.
+async function syncServerStatsToLocalCache(){
+  if(!sb || !myAccountId) return;
+  try{
+    const [{ data: matches, error: mErr }, { data: mastery, error: xErr }] = await Promise.all([
+      sb.from('match_history').select('won, combo_best').eq('profile_id', myAccountId),
+      sb.from('character_mastery').select('character_name, play_count').eq('profile_id', myAccountId),
+    ]);
+    if(mErr || xErr || !matches) return;
+    const s = { matches: matches.length, wins: matches.filter(m=>m.won).length,
+                bestCombo: matches.reduce((mx,m)=>Math.max(mx, m.combo_best||0), 0), charPlays: {} };
+    (mastery||[]).forEach(row=>{ s.charPlays[row.character_name] = row.play_count; });
+    saveLifetimeStats(s);
+    renderLifetimeStatsBox();
+  }catch(e){}
+}
+
+async function recordMatchResultToServer(won, myCombo, charName){
+  if(!sb) return;
+  try{
+    await ensureAccount();
+    if(!myAccountId) return;
+    await sb.from('match_history').insert({ profile_id: myAccountId, character_name: charName||'', won: !!won, combo_best: myCombo||0 });
+    if(charName){
+      const { data: existing } = await sb.from('character_mastery').select('play_count, win_count, xp').eq('profile_id', myAccountId).eq('character_name', charName).maybeSingle();
+      const play_count = (existing?.play_count||0) + 1;
+      const win_count = (existing?.win_count||0) + (won?1:0);
+      const xp = (existing?.xp||0) + (won ? 30 : 10); // 승리 30xp / 참가 10xp — 캐릭터 숙련도의 기초값 (밸런스는 추후 조정)
+      await sb.from('character_mastery').upsert({ profile_id: myAccountId, character_name: charName, play_count, win_count, xp }, { onConflict: 'profile_id,character_name' });
+    }
+  }catch(e){}
+}
+
+ensureAccount(); // 페이지 로드 시 익명 로그인 시도 + 서버 기록 동기화 (실패해도 게임엔 영향 없음)
 
 // ==================== 배경 테마 (라운드마다 변화) ====================
 // 장애물: 테마당 정적 1개 + 이동형(patrol) 1개로 구성. path가 있으면 cx/cy를 중심으로
