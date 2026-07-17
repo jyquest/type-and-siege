@@ -37,17 +37,19 @@
   /* ---------- 캐릭터 선택 화면 ---------- */
   #screenSelect h2 { margin: 6px 0 2px 0; font-size: 18px; }
   #selectStatus { font-size: 13px; color: #9fe3ff; margin-bottom: 14px; height: 18px; }
-  #charGrid { display: grid; grid-template-columns: repeat(5, 108px); gap: 10px; margin-bottom: 18px; }
+  #charGrid { display: grid; grid-template-columns: repeat(5, 130px); gap: 10px; margin-bottom: 18px; }
   .charTile {
-    width: 108px; height: 92px; background: #1e1e2a; border: 2px solid #3a3a4a; border-radius: 6px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer;
-    position: relative; text-align: center; padding: 4px;
+    width: 130px; height: 138px; background: #1e1e2a; border: 2px solid #3a3a4a; border-radius: 6px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; cursor: pointer;
+    position: relative; text-align: center; padding: 6px 5px;
   }
   .charTile.locked { opacity: 0.45; cursor: not-allowed; }
   .charTile.ready:hover { border-color: #6c8cff; }
-  .charTile .sym { font-size: 26px; margin-bottom: 4px; }
-  .charTile .nm { font-size: 12px; font-weight: bold; }
-  .charTile .lockTag { font-size: 9px; color: #888; margin-top: 2px; }
+  .charTile .sym { width: 44px; height: 44px; margin-bottom: 4px; display: flex; align-items: center; justify-content: center; }
+  .charTile .sym img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; filter: drop-shadow(0 0 3px rgba(0,0,0,0.7)); }
+  .charTile .nm { font-size: 12px; font-weight: bold; margin-bottom: 3px; }
+  .charTile .desc { font-size: 9px; color: #9aa0b4; line-height: 1.3; }
+  .charTile .lockTag { font-size: 9px; color: #888; margin-top: 3px; }
   .charTile.pickedMe { border-color: #6c8cff; box-shadow: 0 0 0 2px #6c8cff inset; }
   .charTile.pickedOpp { border-color: #ff6c6c; box-shadow: 0 0 0 2px #ff6c6c inset; }
   .charTile.pickedMe.pickedOpp { box-shadow: 0 0 0 2px #6c8cff inset, 0 0 0 4px #ff6c6c inset; }
@@ -137,7 +139,7 @@
   <h1>TYPE&SIEGE</h1>
   <div class="sub">온라인 1:1 대전 프로토타입 (베타 · P2P 직접연결 · 15직업)</div>
 
-  <input id="nicknameInput" maxlength="6" placeholder="닉네임을 입력하세요 (최대 6타, 선택사항)">
+  <input id="nicknameInput" maxlength="6" placeholder="닉네임을 입력하세요 (한글만, 최대 6자, 선택사항)">
 
   <div class="homeBox">
     <h3>방 만들기</h3>
@@ -238,7 +240,7 @@ const MOVE_KEYS = {
   w:{dx:0,dy:-70,dir:'up'}, s:{dx:0,dy:70,dir:'down'}, a:{dx:-70,dy:0,dir:'left'}, d:{dx:70,dy:0,dir:'right'},
   'ㅈ':{dx:0,dy:-70,dir:'up'}, 'ㄴ':{dx:0,dy:70,dir:'down'}, 'ㅁ':{dx:-70,dy:0,dir:'left'}, 'ㅇ':{dx:70,dy:0,dir:'right'},
 };
-const MOVE_COST = 5, MOVE_CD = 1;
+const MOVE_COST = 5, MOVE_CD = 0.12; // 예전엔 CD가 1초라 이동이 끊기고 딜레이 있게 느껴졌음 — 마나 소모(5)가 자연스러운 제한 역할을 하므로 CD는 거의 없애서 타이핑 속도 그대로 쭉쭉 이동되게 함
 
 // ==================== 공용 기본기 ====================
 const SHARED_SKILLS = {
@@ -460,21 +462,21 @@ const MARTIAL_ORDER = ['정권','답설','심법','강기','혈도','반탄','�
 
 // ==================== 캐릭터 DB ====================
 const CHAR_DB = {
-  '네크로맨서':    { skills: NECRO_SKILLS,       order: NECRO_ORDER,       maxMana:140, manaStart:70, regen:8,  sym:'💀', ready:true },
-  '팔라딘':        { skills: PALADIN_SKILLS,     order: PALADIN_ORDER,     maxMana:110, manaStart:55, regen:9,  sym:'🛡️', ready:true },
-  '엘리멘탈리스트': { skills: ELEM_SKILLS,        order: ELEM_ORDER,        maxMana:100, manaStart:60, regen:10, sym:'🔥', ready:true },
-  '글래디에이터':   { skills: GLADIATOR_SKILLS,   order: GLADIATOR_ORDER,   maxMana:120, manaStart:60, regen:8,  sym:'⚔️', ready:true },
-  '드루이드':      { skills: DRUID_SKILLS,        order: DRUID_ORDER,       maxMana:125, manaStart:62, regen:8,  sym:'🌿', ready:true },
-  '일루셔니스트':   { skills: ILLUSIONIST_SKILLS, order: ILLUSIONIST_ORDER, maxMana:105, manaStart:55, regen:9,  sym:'🎭', ready:true },
-  '크로노맨서':     { skills: CHRONOMANCER_SKILLS,order: CHRONOMANCER_ORDER,maxMana:100, manaStart:55, regen:10, sym:'⏳', ready:true },
-  '어새신':        { skills: ASSASSIN_SKILLS,     order: ASSASSIN_ORDER,    maxMana:100, manaStart:55, regen:10, sym:'🗡️', ready:true },
-  '메카닉':        { skills: MECHANIC_SKILLS,     order: MECHANIC_ORDER,    maxMana:115, manaStart:58, regen:9,  sym:'⚙️', ready:true },
-  '건슬링어':      { skills: GUNSLINGER_SKILLS,   order: GUNSLINGER_ORDER,  maxMana:100, manaStart:55, regen:10, sym:'🔫', ready:true },
-  '바드':          { skills: BARD_SKILLS,         order: BARD_ORDER,        maxMana:105, manaStart:55, regen:9,  sym:'🎵', ready:true },
-  '블러드위치':     { skills: BLOODWITCH_SKILLS,   order: BLOODWITCH_ORDER,  maxMana:100, manaStart:55, regen:9,  sym:'🩸', ready:true },
-  '갬블러':        { skills: GAMBLER_SKILLS,      order: GAMBLER_ORDER,     maxMana:105, manaStart:55, regen:9,  sym:'🎲', ready:true },
-  '페인터':        { skills: PAINTER_SKILLS,      order: PAINTER_ORDER,     maxMana:100, manaStart:55, regen:9,  sym:'🎨', ready:true },
-  '권황':          { skills: MARTIAL_SKILLS,      order: MARTIAL_ORDER,     maxMana:95,  manaStart:50, regen:10, sym:'👊', ready:true },
+  '네크로맨서':    { skills: NECRO_SKILLS,       order: NECRO_ORDER,       maxMana:140, manaStart:70, regen:8,  sym:'💀', ready:true, melee:false, desc:'좀비 등 소환수를 계속 뽑아 숫자로 밀어붙이는 소환사' },
+  '팔라딘':        { skills: PALADIN_SKILLS,     order: PALADIN_ORDER,     maxMana:110, manaStart:55, regen:9,  sym:'🛡️', ready:true, melee:true,  desc:'단단한 방어와 성역으로 버티는 근접 탱커형 딜러' },
+  '엘리멘탈리스트': { skills: ELEM_SKILLS,        order: ELEM_ORDER,        maxMana:100, manaStart:60, regen:10, sym:'🔥', ready:true, melee:false, desc:'화염구·빙창으로 멀리서 견제하는 원거리 마법사' },
+  '글래디에이터':   { skills: GLADIATOR_SKILLS,   order: GLADIATOR_ORDER,   maxMana:120, manaStart:60, regen:8,  sym:'⚔️', ready:true, melee:true,  desc:'검과 방패를 들고 정면으로 부딪히는 근접 전사' },
+  '드루이드':      { skills: DRUID_SKILLS,        order: DRUID_ORDER,       maxMana:125, manaStart:62, regen:8,  sym:'🌿', ready:true, melee:false, desc:'정령을 부리고 지속피해를 쌓는 자연 소환사' },
+  '일루셔니스트':   { skills: ILLUSIONIST_SKILLS, order: ILLUSIONIST_ORDER, maxMana:105, manaStart:55, regen:9,  sym:'🎭', ready:true, melee:false, desc:'분신과 환영으로 상대를 속이는 원거리 트릭스터' },
+  '크로노맨서':     { skills: CHRONOMANCER_SKILLS,order: CHRONOMANCER_ORDER,maxMana:100, manaStart:55, regen:10, sym:'⏳', ready:true, melee:false, desc:'시간을 늦추고 되감아 상대 템포를 뺏는 원거리 캐스터' },
+  '어새신':        { skills: ASSASSIN_SKILLS,     order: ASSASSIN_ORDER,    maxMana:100, manaStart:55, regen:10, sym:'🗡️', ready:true, melee:true,  desc:'은신 후 급소를 노리는 근접 암살자' },
+  '메카닉':        { skills: MECHANIC_SKILLS,     order: MECHANIC_ORDER,    maxMana:115, manaStart:58, regen:9,  sym:'⚙️', ready:true, melee:false, desc:'터렛과 레일건 등 기계 장비로 싸우는 원거리 공학자' },
+  '건슬링어':      { skills: GUNSLINGER_SKILLS,   order: GUNSLINGER_ORDER,  maxMana:100, manaStart:55, regen:10, sym:'🔫', ready:true, melee:false, desc:'연사·난사로 탄막을 퍼붓는 원거리 총잡이' },
+  '바드':          { skills: BARD_SKILLS,         order: BARD_ORDER,        maxMana:105, manaStart:55, regen:9,  sym:'🎵', ready:true, melee:false, desc:'노래로 아군을 북돋고 견제하는 원거리 서포터' },
+  '블러드위치':     { skills: BLOODWITCH_SKILLS,   order: BLOODWITCH_ORDER,  maxMana:100, manaStart:55, regen:9,  sym:'🩸', ready:true, melee:false, desc:'자기 체력을 대가로 저주를 거는 원거리 딜러' },
+  '갬블러':        { skills: GAMBLER_SKILLS,      order: GAMBLER_ORDER,     maxMana:105, manaStart:55, regen:9,  sym:'🎲', ready:true, melee:false, desc:'주사위와 카드로 운에 맡긴 한 방을 노리는 원거리 딜러' },
+  '페인터':        { skills: PAINTER_SKILLS,      order: PAINTER_ORDER,     maxMana:100, manaStart:55, regen:9,  sym:'🎨', ready:true, melee:false, desc:'색을 칠해 다양한 효과를 만드는 원거리 딜러' },
+  '권황':          { skills: MARTIAL_SKILLS,      order: MARTIAL_ORDER,     maxMana:95,  manaStart:50, regen:10, sym:'👊', ready:true, melee:true,  desc:'맨몸으로 적을 두들기는 근접 무술가' },
 };
 const ALL_CHAR_ORDER = ['네크로맨서','팔라딘','엘리멘탈리스트','글래디에이터','드루이드','일루셔니스트','크로노맨서','어새신','메카닉','건슬링어','바드','블러드위치','갬블러','페인터','권황'];
 
@@ -553,9 +555,26 @@ function randCode(){
   return s;
 }
 
+// 닉네임은 한글 완성형 음절(가-힣)만 허용 — 영문/숫자/자모 낱자(ㅈㅁㄴㅇ 등 이동키와 헷갈릴 수 있음)/특수문자는 제거
+function sanitizeNickname(v){
+  return (v||'').replace(/[^가-힣]/g, '').slice(0,6);
+}
+// 같은 방 안에서 닉네임이 겹치면 뒤에 숫자를 붙여 자동으로 구분 (닉네임으로 상대를 타겟락하는 기능과 충돌 방지)
+function dedupeNickname(nick, excludeSlot){
+  if(!roster) return nick;
+  const taken = new Set(Object.keys(roster).filter(k=>k!==excludeSlot).map(k=>roster[k]&&roster[k].nick).filter(Boolean));
+  if(!nick || !taken.has(nick)) return nick;
+  for(let i=2; i<50; i++){
+    const suffix = String(i);
+    const cand = nick.slice(0, Math.max(1, 6-suffix.length)) + suffix;
+    if(!taken.has(cand)) return cand;
+  }
+  return nick;
+}
+
 function readNickname(){
-  const v = document.getElementById('nicknameInput').value.trim();
-  myNickname = v ? v.slice(0,6) : 'Player';
+  const v = sanitizeNickname(document.getElementById('nicknameInput').value.trim());
+  myNickname = v || 'Player';
 }
 
 function hostRoom(mode, attempt){
@@ -572,8 +591,17 @@ function hostRoom(mode, attempt){
   peer.on('open', ()=>{
     role = 'host'; mySlotKey = 'A1'; mySideLetter = 'A';
     document.getElementById('roomCodeDisplay').textContent = code;
-    document.getElementById('hostWaitBox').style.display = 'block';
-    connStatusEl.textContent = (roomMode==='2v2'||roomMode==='ffa4') ? '친구들의 접속을 기다리는 중... (최대 3명, 접속 순서대로 자동배정)' : (roomMode==='ffa3' ? '친구들의 접속을 기다리는 중... (최대 2명, 접속 순서대로 자동배정)' : '친구의 접속을 기다리는 중...');
+    if(roomMode === '1v1'){
+      // 1대1은 두 번째 사람이 들어오면 checkAutoAdvance()가 바로 선택화면으로 넘겨주므로 홈 화면에서 대기
+      document.getElementById('hostWaitBox').style.display = 'block';
+      connStatusEl.textContent = '친구의 접속을 기다리는 중...';
+    } else {
+      // 2대2/개인전은 방장이 인원을 보고 수동으로 시작해야 하므로 대기실 화면으로 바로 전환
+      // (이 화면 전환이 빠져 있던 게 1대1대1/1대1대1대1/2대2 방이 "먹통"처럼 보이던 원인이었음 —
+      //  친구들이 들어와도 방장 화면엔 "시작" 버튼이 있는 대기실이 아니라 계속 홈 화면만 보였음)
+      showScreen('lobby');
+      renderLobby();
+    }
   });
   peer.on('connection', c=>{
     if(roomPhase !== 'lobby'){ try{ c.close(); }catch(e){} return; } // 이미 선택/매치 단계로 넘어간 방
@@ -636,6 +664,23 @@ function checkAutoAdvance(){
     showScreen('select'); renderCharGrid(); updateSelectStatus();
   }
 }
+
+// 닉네임 입력창: 타이핑하는 즉시 한글 완성형 음절 외의 문자는 걸러냄 (한글 IME 조합 중엔 건드리지 않음)
+(function(){
+  const nickInput = document.getElementById('nicknameInput');
+  let composing = false;
+  nickInput.addEventListener('compositionstart', ()=>{ composing = true; });
+  nickInput.addEventListener('compositionend', function(){
+    composing = false;
+    const cleaned = sanitizeNickname(this.value);
+    if(this.value !== cleaned) this.value = cleaned;
+  });
+  nickInput.addEventListener('input', function(){
+    if(composing) return;
+    const cleaned = sanitizeNickname(this.value);
+    if(this.value !== cleaned) this.value = cleaned;
+  });
+})();
 
 document.getElementById('btnHost1v1').addEventListener('click', ()=>{ hostRoom('1v1'); });
 document.getElementById('btnHost2v2').addEventListener('click', ()=>{ hostRoom('2v2'); });
@@ -704,7 +749,10 @@ function renderCharGrid(){
       const pickedByOther = Object.keys(roster).some(k=>k!==mySlotKey && roster[k] && roster[k].char===name);
       if(pickedByOther) tile.classList.add('pickedOpp');
     }
-    tile.innerHTML = `<div class="sym">${def.sym}</div><div class="nm">${name}</div>` + (def.ready ? '' : `<div class="lockTag">준비중</div>`);
+    const spriteKey = CHAR_SPRITE[name];
+    const b64 = (spriteKey && typeof ASSET_B64 !== 'undefined') ? ASSET_B64[spriteKey] : null;
+    const iconHTML = b64 ? `<img src="data:image/png;base64,${b64}" alt="${name}">` : (def.sym||'');
+    tile.innerHTML = `<div class="sym">${iconHTML}</div><div class="nm">${name}</div><div class="desc">${def.desc||''}</div>` + (def.ready ? '' : `<div class="lockTag">준비중</div>`);
     if(def.ready){
       tile.addEventListener('click', ()=>{
         if(isPractice){ practiceChar = name; }
@@ -776,7 +824,10 @@ function maybeStart(){
 function handleNetMessage(msg, fromSlot){
   if(role==='host'){
     if(msg.t === 'hello'){
-      if(fromSlot && roster[fromSlot]) roster[fromSlot].nick = (msg.nick||'Player').slice(0,6);
+      if(fromSlot && roster[fromSlot]){
+        const cleaned = sanitizeNickname(msg.nick) || 'Player';
+        roster[fromSlot].nick = dedupeNickname(cleaned, fromSlot);
+      }
       renderLobby(); broadcastRoster('lobby');
       checkAutoAdvance();
     } else if(msg.t === 'pick'){
@@ -857,20 +908,20 @@ function triggerSuddenDeathEffect(){
   const wizards = allWizards().filter(w=>w.alive);
   if(pick==='cdReset'){
     wizards.forEach(w=>{ Object.keys(w.cooldowns).forEach(k=> w.cooldowns[k]=0); });
-    matchBanner = { text: '🌀 서든데스 효과 — 전원 쿨다운 초기화!', sub:'', life:2.2, color:'#9fe3ff' };
+    matchBanner = { text: '🌀 서든데스 효과 — 전원 쿨다운 초기화!', sub:'', life:1.6, color:'#9fe3ff' };
     log('🌀 서든데스 효과: 전원 쿨다운 초기화');
   } else if(pick==='manaBoost'){
     wizards.forEach(w=>{ w.mana = w.maxMana; });
-    matchBanner = { text: '💠 서든데스 효과 — 전원 마나 완충!', sub:'', life:2.2, color:'#9fe3ff' };
+    matchBanner = { text: '💠 서든데스 효과 — 전원 마나 완충!', sub:'', life:1.6, color:'#9fe3ff' };
     log('💠 서든데스 효과: 전원 마나 완충');
   } else if(pick==='haste'){
     wizards.forEach(w=>{ w.hasteTimer = Math.max(w.hasteTimer||0, 6); w.hasteMult = Math.max(w.hasteMult||1, 2.0); });
-    matchBanner = { text: '⚡ 서든데스 효과 — 전원 가속!', sub:'', life:2.2, color:'#ffe066' };
+    matchBanner = { text: '⚡ 서든데스 효과 — 전원 가속!', sub:'', life:1.6, color:'#ffe066' };
     log('⚡ 서든데스 효과: 전원 쿨다운 회복 가속');
   } else if(pick==='dmgSpike'){
     suddenDeathSpikeTimer = 4;
     suddenDeathSpikeMult = 1.5;
-    matchBanner = { text: '🔥 서든데스 효과 — 피해 폭증!', sub:'', life:2.2, color:'#ff6644' };
+    matchBanner = { text: '🔥 서든데스 효과 — 피해 폭증!', sub:'', life:1.6, color:'#ff6644' };
     log('🔥 서든데스 효과: 4초간 받는 피해 추가 증가');
   }
 }
@@ -880,7 +931,7 @@ function updateSuddenDeath(dt){
   roundElapsed += dt;
   if(!suddenDeath && roundElapsed >= SUDDEN_DEATH_START){
     suddenDeath = true;
-    matchBanner = { text: '⚠️ 서든데스 시작! 받는 피해가 점점 증가합니다', sub:'', life:2.5, color:'#ff4444' };
+    matchBanner = { text: '⚠️ 서든데스 시작! 받는 피해가 점점 증가합니다', sub:'', life:1.8, color:'#ff4444' };
     log('⚠️ 서든데스 시작 — 받는 피해가 서서히 증가합니다');
   }
   if(suddenDeath){
@@ -907,37 +958,37 @@ const BG_THEMES = [
   { name:'네온시티', bg1:'#15151f', bg2:'#0a0a10', grid:'rgba(140,180,255,0.05)', ambient:'#8ec9ff', tile:'tile_wood',
     obEmoji:'🗼', obColor:'#3a3a5a', obGlow:'#00e5ff',
     obstacles:[
-      {x:300,y:150,r:24},
+      {x:300,y:150,r:24, path:{cx:300,cy:150,amp:60,speed:0.6,axis:'y'}},
       {x:520,y:310,r:20, path:{cx:520,cy:310,amp:70,speed:0.9,axis:'x'}},
     ] },
   { name:'용암지대', bg1:'#20120e', bg2:'#120906', grid:'rgba(255,140,70,0.06)', ambient:'#ff8a4a', tile:'tile_brick_red',
     obEmoji:'🪨', obColor:'#3a2018', obGlow:'#ff3d00',
     obstacles:[
-      {x:400,y:230,r:30},
+      {x:400,y:230,r:30, path:{cx:400,cy:230,amp:65,speed:0.75,axis:'x'}},
       {x:250,y:230,r:18, path:{cx:250,cy:230,amp:90,speed:1.1,axis:'y'}},
     ] },
   { name:'빙설지대', bg1:'#0f1c28', bg2:'#080f18', grid:'rgba(160,225,255,0.06)', ambient:'#a8e8ff', tile:'tile_water',
     obEmoji:'🧊', obColor:'#284858', obGlow:'#5be0ff',
     obstacles:[
-      {x:300,y:310,r:22},
+      {x:300,y:310,r:22, path:{cx:300,cy:310,amp:60,speed:0.85,axis:'y'}},
       {x:500,y:150,r:22, path:{cx:500,cy:150,amp:80,speed:0.7,axis:'x'}},
     ] },
   { name:'심연숲',   bg1:'#0f1f14', bg2:'#08120c', grid:'rgba(130,255,160,0.05)', ambient:'#8fe89f', tile:'tile_grass',
     obEmoji:'🌳', obColor:'#1e3a22', obGlow:'#4dff7a',
     obstacles:[
-      {x:280,y:230,r:28},
+      {x:280,y:230,r:28, path:{cx:280,cy:230,amp:55,speed:0.65,axis:'x'}},
       {x:520,y:230,r:24, path:{cx:520,cy:230,amp:85,speed:0.8,axis:'y'}},
     ] },
   { name:'황혼사막', bg1:'#20190f', bg2:'#120d08', grid:'rgba(255,205,130,0.06)', ambient:'#f0c26e', tile:'tile_sand',
     obEmoji:'🗿', obColor:'#4a3c26', obGlow:'#ffcc33',
     obstacles:[
-      {x:330,y:150,r:20},
+      {x:330,y:150,r:20, path:{cx:330,cy:150,amp:60,speed:0.95,axis:'y'}},
       {x:470,y:310,r:20, path:{cx:470,cy:310,amp:75,speed:1.0,axis:'x'}},
     ] },
   { name:'유령성채', bg1:'#170f20', bg2:'#0c0714', grid:'rgba(200,150,255,0.06)', ambient:'#c99fff', tile:'tile_brick_red',
     obEmoji:'🪦', obColor:'#2e2440', obGlow:'#b366ff',
     obstacles:[
-      {x:350,y:180,r:20},
+      {x:350,y:180,r:20, path:{cx:350,cy:180,amp:55,speed:1.05,axis:'x'}},
       {x:450,y:280,r:16, path:{cx:450,cy:280,amp:70,speed:1.2,axis:'y'}},
     ] },
 ];
@@ -1013,14 +1064,41 @@ function updateFxStamps(dt){
 function newWizard(side, x, y, charName){
   const def = CHAR_DB[charName];
   return { side, x, y, homeX:x, homeY:y, hp:100, maxHp:100, mana:def.manaStart, maxMana:def.maxMana,
-           charName, skills: def.skills,
+           charName, skills: def.skills, melee: !!def.melee,
            alive:true, respawnTimer:0, cooldowns:{}, flash:0, frozenTimer:0,
            parryTimer:0, parryReduce:0.7, shieldTimer:0, channeling:false, channelTimer:0,
            dmgReduceTimer:0, dmgReduceMult:1, tauntTimer:0, stealthTimer:0, blinkLockTimer:0,
            manaRegenTimer:0, manaRegenMult:1, hasteTimer:0, hasteMult:1,
            allyDmgBuffTimer:0, allyDmgBuffMult:1, hotTimer:0, hotRate:0, dotTimer:0, dotRate:0,
            stacks:0, markedTimer:0, markedBonus:1, targetLock:null, isWizard:true, slot:1,
-           comboCount:0, comboTimer:0 };
+           comboCount:0, comboTimer:0, autoAtkCd: AUTO_ATK_INTERVAL*0.5 };
+}
+
+// ==================== 평타 (자동 기본 공격) ====================
+// 스킬을 하나도 안 써도 주기적으로 자동으로 나가는 기본 공격.
+// 근접 직업(팔라딘/글래디에이터/어새신/권황)은 붙어야 맞는 대신 데미지 5, 원거리 직업은 항상 견제로 데미지 1.
+const AUTO_ATK_INTERVAL = 2.0;
+const AUTO_ATK_MELEE_DMG = 5;
+const AUTO_ATK_RANGED_DMG = 1;
+const AUTO_ATK_MELEE_RANGE = 46;
+const AUTO_ATK_RANGED_RANGE = 900; // 사실상 맵 전체 — 원거리 직업은 거리 상관없이 견제 평타가 나감
+const AUTO_ATK_RANGED_SPD = 260;
+function updateAutoAttack(w, dt){
+  if(roundOver || matchOver || !w.alive || w.frozenTimer>0 || w.channeling) return;
+  w.autoAtkCd = (w.autoAtkCd||0) - dt;
+  if(w.autoAtkCd > 0) return;
+  const target = nearestEnemyTarget(w);
+  if(!target) return;
+  const range = w.melee ? AUTO_ATK_MELEE_RANGE : AUTO_ATK_RANGED_RANGE;
+  if(dist(w, target) > range) return;
+  w.autoAtkCd = AUTO_ATK_INTERVAL;
+  if(w.melee){
+    applyDamage(target, AUTO_ATK_MELEE_DMG, false, w.side);
+    spawnImpactBurst(target.x, target.y, null, false);
+    spawnSlash(target.x, target.y, Math.atan2(target.y-w.y, target.x-w.x), '#dddddd');
+  } else {
+    fireProjectile(w, target, AUTO_ATK_RANGED_DMG, AUTO_ATK_RANGED_SPD, false, null, 0);
+  }
 }
 
 // ==================== 팀/로스터 헬퍼 (1대1·2대2 공용) ====================
@@ -1681,6 +1759,10 @@ function checkDeath(w){
   if(w.alive && w.hp <= 0){
     w.alive = false; w.respawnTimer = 1.6; w.hp = 0;
     w.comboCount = 0; w.comboTimer = 0;
+    // 마법사가 죽으면 그 사람이 소환한 소환수/건물도 전부 즉시 제거
+    // (죽었는데 소환수만 계속 남아서 싸우는 게 어색하다는 피드백 반영)
+    summons.forEach(su=>{ if(su.owner===w.side && su.hp>0) su.hp = 0; });
+    buildings.forEach(b=>{ if(b.owner===w.side && b.hp>0) b.hp = 0; });
     shake = 12;
     const fallenName = nickForWizard(w);
     log(`${w.side===mySideLetter?'내가':'상대가'} 쓰러짐 — 곧 리스폰`);
@@ -2414,6 +2496,9 @@ function loop(now){
     shake = Math.max(0, shake - dt*30);
     if(comboBanner){ comboBanner.life -= dt; if(comboBanner.life<=0) comboBanner = null; }
     if(koBanner){ koBanner.life -= dt; if(koBanner.life<=0) koBanner = null; }
+    // matchBanner도 life가 있으면 자동으로 사라지게 함 (서든데스 효과 알림 등이 화면에 계속 남아있던 문제 수정).
+    // life:999(매치 승리 배너)는 사실상 리셋 전까지 안 사라지는 것과 같으므로 그대로 둬도 안전함.
+    if(matchBanner && matchBanner.life < 900){ matchBanner.life -= dt; if(matchBanner.life<=0) matchBanner = null; }
   }
   updatePanels();
   render();
@@ -2452,6 +2537,7 @@ function update(dt){
       }
     }
     updateRespawn(w, dt);
+    updateAutoAttack(w, dt);
     checkDeath(w);
   });
   updateObstacles(dt);
