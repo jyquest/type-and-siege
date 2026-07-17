@@ -1092,12 +1092,11 @@ function updateAutoAttack(w, dt){
   const range = w.melee ? AUTO_ATK_MELEE_RANGE : AUTO_ATK_RANGED_RANGE;
   if(dist(w, target) > range) return;
   w.autoAtkCd = AUTO_ATK_INTERVAL;
+  // 평타는 스킬 이펙트보다 훨씬 작게 — quiet=true로 hitWizard/투사체의 큰 파티클·링·화면흔들림·사운드를 생략
   if(w.melee){
-    applyDamage(target, AUTO_ATK_MELEE_DMG, false, w.side);
-    spawnImpactBurst(target.x, target.y, null, false);
-    spawnSlash(target.x, target.y, Math.atan2(target.y-w.y, target.x-w.x), '#dddddd');
+    applyDamage(target, AUTO_ATK_MELEE_DMG, false, w.side, true);
   } else {
-    fireProjectile(w, target, AUTO_ATK_RANGED_DMG, AUTO_ATK_RANGED_SPD, false, null, 0);
+    fireProjectile(w, target, AUTO_ATK_RANGED_DMG, AUTO_ATK_RANGED_SPD, false, null, 0, false, 0, null, 'autotick', true);
   }
 }
 
@@ -1220,7 +1219,7 @@ function tickDamage(entity, dmg){
   entity.flash = Math.max(entity.flash||0, 0.06);
 }
 
-function hitWizard(w, dmg, ignoreShield, attackerSide){
+function hitWizard(w, dmg, ignoreShield, attackerSide, quiet){
   if(attackerSide) w.lastHitSide = attackerSide;
   dmg = Math.round(dmg*getPassiveDmgReduceMult(w));
   if(w.shieldTimer>0 && !ignoreShield){
@@ -1239,7 +1238,8 @@ function hitWizard(w, dmg, ignoreShield, attackerSide){
   if(suddenDeath) dmg = Math.round(dmg*suddenDeathDmgMult*suddenDeathSpikeMult);
 
   // 콤보 시스템: 같은 상대를 끊기지 않고 계속 때리면 스택이 쌓이고 소폭 데미지 보너스가 붙는다
-  const attacker = attackerSide ? wizardOfSide(attackerSide) : null;
+  // 평타(quiet)는 콤보에 기여하지 않음 — 가만히 있어도 자동으로 쌓이는 건 콤보의 의미가 없어짐
+  const attacker = (attackerSide && !quiet) ? wizardOfSide(attackerSide) : null;
   let comboMult = 1;
   if(attacker){
     const stacks = Math.min(attacker.comboCount||0, 15);
@@ -1247,14 +1247,22 @@ function hitWizard(w, dmg, ignoreShield, attackerSide){
   }
   dmg = Math.round(dmg*comboMult);
 
-  const bigHit = comboMult > 1.1;
+  const bigHit = !quiet && comboMult > 1.1;
   w.hp -= dmg; w.flash = 0.12;
-  const comboShake = attacker ? Math.min((attacker.comboCount||0)*0.4, 6) : 0;
-  shake = Math.min(shake + 4 + comboShake, 16);
-  spawnParticles(w.x, w.y, bigHit ? '#ffd23f' : '#ffffff', bigHit ? 10 : 6);
-  spawnDmgNumber(w.x, w.y-26, dmg, bigHit ? '#ffd23f' : '#ff7a7a');
-  spawnRing(w.x, w.y, bigHit ? '#ffd23f' : '#ffffff', bigHit ? 32 : 26, 0.28);
-  beep(bigHit ? 220 : 180, 0.1, 'sawtooth', bigHit ? 0.13 : 0.1);
+  if(quiet){
+    // 평타는 존재감만 알려주는 정도로 아주 작게 표시 — 화면을 어지럽히지 않게 함
+    shake = Math.min(shake + 1, 16);
+    spawnParticles(w.x, w.y, '#ffffff', 2);
+    spawnDmgNumber(w.x, w.y-20, dmg, '#c9c9c9');
+    spawnRing(w.x, w.y, '#ffffff', 11, 0.18);
+  } else {
+    const comboShake = attacker ? Math.min((attacker.comboCount||0)*0.4, 6) : 0;
+    shake = Math.min(shake + 4 + comboShake, 16);
+    spawnParticles(w.x, w.y, bigHit ? '#ffd23f' : '#ffffff', bigHit ? 10 : 6);
+    spawnDmgNumber(w.x, w.y-26, dmg, bigHit ? '#ffd23f' : '#ff7a7a');
+    spawnRing(w.x, w.y, bigHit ? '#ffd23f' : '#ffffff', bigHit ? 32 : 26, 0.28);
+    beep(bigHit ? 220 : 180, 0.1, 'sawtooth', bigHit ? 0.13 : 0.1);
+  }
 
   if(attacker && dmg>0){
     attacker.comboCount = (attacker.comboCount||0) + 1;
@@ -1263,12 +1271,13 @@ function hitWizard(w, dmg, ignoreShield, attackerSide){
   }
 }
 
-function applyDamage(entity, dmg, ignoreShield, attackerSide){
+function applyDamage(entity, dmg, ignoreShield, attackerSide, quiet){
   if(entity.markedTimer && entity.markedTimer>0){
     dmg = Math.round(dmg*(entity.markedBonus||1));
     entity.markedTimer = 0;
   }
-  if(entity && entity.isWizard){ hitWizard(entity, dmg, ignoreShield, attackerSide); }
+  if(entity && entity.isWizard){ hitWizard(entity, dmg, ignoreShield, attackerSide, quiet); }
+  else if(quiet){ entity.hp -= dmg; entity.flash = 0.12; spawnParticles(entity.x, entity.y, '#ffcc66', 1); spawnDmgNumber(entity.x, entity.y-14, dmg, '#ddddaa'); }
   else { entity.hp -= dmg; entity.flash = 0.12; spawnParticles(entity.x, entity.y, '#ffcc66', 4); spawnDmgNumber(entity.x, entity.y-16, dmg, '#ffcc66'); }
 }
 
@@ -1390,11 +1399,11 @@ function castShared(wizard, name){
   return true;
 }
 
-function fireProjectile(wizard, target, dmg, spd, pierce, elem, chill, ignoreShield, lifesteal, effect, shape){
+function fireProjectile(wizard, target, dmg, spd, pierce, elem, chill, ignoreShield, lifesteal, effect, shape, quiet){
   const ang = Math.atan2(target.y-wizard.y, target.x-wizard.x);
   projectiles.push({x:wizard.x, y:wizard.y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd,
                      dmg, owner:wizard.side, pierce, elem, chill, ignoreShield: !!ignoreShield, lifesteal: lifesteal||0,
-                     effect: effect||null, hitSet:new Set(), life:2, shape: shape||null});
+                     effect: effect||null, hitSet:new Set(), life:2, shape: shape||null, quiet: !!quiet});
 }
 function fireEffectProjectile(wizard, target, dmg, spd, effect){
   if(!target) return;
@@ -1436,10 +1445,10 @@ function updateBurstQueue(dt){
   burstQueue = burstQueue.filter(b=>b.shotsLeft>0);
 }
 
-function applyElemDamage(entity, dmg, elem, ignoreShield, attackerSide){
+function applyElemDamage(entity, dmg, elem, ignoreShield, attackerSide, quiet){
   let finalDmg = dmg;
   const frozen = (entity.frozenTimer||0) > 0;
-  if(elem==='fire' && frozen){
+  if(elem==='fire' && frozen && !quiet){
     finalDmg = Math.round(dmg*1.6);
     entity.frozenTimer = 0;
     spawnParticles(entity.x, entity.y, '#ffffff', 16);
@@ -1447,7 +1456,7 @@ function applyElemDamage(entity, dmg, elem, ignoreShield, attackerSide){
     beep(880, 0.15, 'square', 0.1);
     announceCombo('fire_freeze', '빙결+화염 = 셔터(추가피해)');
   }
-  applyDamage(entity, finalDmg, ignoreShield, attackerSide);
+  applyDamage(entity, finalDmg, ignoreShield, attackerSide, quiet);
 }
 
 function aoeBurst(wizard, cx, cy, dmg, radius, elem, lifesteal){
@@ -1556,7 +1565,7 @@ function cast(wizard, name){
     }
   } else if(s.type==='catch'){
     if(target){
-      telegraphs.push({ x:target.x, y:target.y, r:34, timer:s.telegraph, bindDuration:s.bindDuration,
+      telegraphs.push({ x:target.x, y:target.y, r:34, timer:s.telegraph, maxTimer:s.telegraph, bindDuration:s.bindDuration,
                          owner:wizard.side, targetRef:target, resolved:false });
       log(`${who} [${name}] 전조 시작 — 블링크로 피할 수 있음`);
     }
@@ -1837,13 +1846,14 @@ function updateProjectiles(dt){
           const ratio = t.maxHp ? t.hp/t.maxHp : 1;
           if(ratio < (p.effect.execThreshold||0.3)) dmgToApply = Math.round(dmgToApply*(p.effect.execBonus||2));
         }
-        applyElemDamage(t, dmgToApply, p.elem, p.ignoreShield, p.owner);
+        applyElemDamage(t, dmgToApply, p.elem, p.ignoreShield, p.owner, p.quiet);
         if(p.lifesteal){
           const caster = wizardOfSide(p.owner);
           if(caster) caster.hp = Math.min(caster.maxHp, caster.hp + Math.round(dmgToApply*p.lifesteal));
         }
         if(p.chill) t.frozenTimer = Math.max(t.frozenTimer||0, p.chill);
-        spawnImpactBurst(t.x, t.y, p.elem, true);
+        // 평타(quiet) 투사체는 화면을 어지럽히지 않도록 큰 임팩트 이펙트를 생략함 (작은 이펙트는 hitWizard의 quiet 경로에서 이미 나감)
+        if(!p.quiet) spawnImpactBurst(t.x, t.y, p.elem, true);
 
         if(p.effect){
           const eff = p.effect;
@@ -1930,7 +1940,7 @@ function updateTelegraphs(dt){
       tg.resolved = true;
       const t = tg.targetRef;
       const alive = (t && t.isWizard) ? t.alive : t.hp>0;
-      if(alive && Math.hypot(t.x-tg.x, t.y-tg.y) < tg.r+12){
+      if(alive && Math.hypot(t.x-tg.x, t.y-tg.y) < tg.r+40){
         t.frozenTimer = Math.max(t.frozenTimer||0, tg.bindDuration);
         spawnParticles(t.x,t.y,'#bfe9ff',18);
         shake = Math.min(shake+6,12);
@@ -2431,7 +2441,7 @@ function buildSnapshot(){
     traps: traps.map(t=>({owner:t.owner,x:t.x,y:t.y,r:t.r,life:t.life,emoji:t.emoji})),
     meteors: meteors.map(m=>({x:m.x,y:m.y,tx:m.tx,ty:m.ty,ang:m.ang,owner:m.owner})),
     projectiles: projectiles.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,owner:p.owner,elem:p.elem,shape:p.shape})),
-    telegraphs: telegraphs.map(tg=>({x:tg.x,y:tg.y,r:tg.r,timer:tg.timer,resolved:tg.resolved})),
+    telegraphs: telegraphs.map(tg=>({x:tg.x,y:tg.y,r:tg.r,timer:tg.timer,maxTimer:tg.maxTimer,resolved:tg.resolved})),
     zones: zones.map(z=>({x:z.x,y:z.y,radius:z.radius,heal:z.heal,elem:z.elem})),
     particles: particles.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,life:p.life,color:p.color})),
     afterimages: afterimages.map(a=>({x:a.x,y:a.y,life:a.life,side:a.side})),
@@ -2762,7 +2772,7 @@ function render(){
 
   telegraphs.forEach(tg=>{
     if(tg.resolved) return;
-    const p = 1 - Math.max(0,tg.timer)/0.8;
+    const p = 1 - Math.max(0,tg.timer)/(tg.maxTimer||0.8);
     ctx.globalAlpha = 0.5 + p*0.4;
     ctx.strokeStyle = '#ff5566';
     ctx.lineWidth = 3;
@@ -2853,6 +2863,12 @@ function render(){
       ctx.fillStyle = '#fff3c4';
       ctx.beginPath(); ctx.arc(p.x, p.y, 5.5*flick, 0, 7); ctx.fill();
       ctx.shadowBlur = 0;
+    } else if(p.shape==='autotick'){
+      // 평타(자동 기본공격) 전용 — 스킬 이펙트와 헷갈리지 않게 아주 작고 옅은 점 하나로만 표시
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = '#d8d8d8';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 2.6, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
     } else {
       const color = ELEM_BURST_COLOR[p.elem] || (p.owner==='A' ? '#8ec9ff' : '#ff9d8e');
       const trailLen = 24;
