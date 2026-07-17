@@ -51,6 +51,10 @@
   .charTile .nm { font-size: 12px; font-weight: bold; margin-bottom: 3px; }
   .charTile .desc { font-size: 9px; color: #9aa0b4; line-height: 1.3; }
   .charTile .lockTag { font-size: 9px; color: #888; margin-top: 3px; }
+  .charTile .masteryTag {
+    position: absolute; top: 4px; right: 4px; font-size: 9px; font-weight: bold; color: #1e1e2a;
+    background: #ffe066; border-radius: 8px; padding: 1px 5px; line-height: 1.4;
+  }
   .charTile.pickedMe { border-color: #6c8cff; box-shadow: 0 0 0 2px #6c8cff inset; }
   .charTile.pickedOpp { border-color: #ff6c6c; box-shadow: 0 0 0 2px #ff6c6c inset; }
   .charTile.pickedMe.pickedOpp { box-shadow: 0 0 0 2px #6c8cff inset, 0 0 0 4px #ff6c6c inset; }
@@ -152,6 +156,19 @@
       <div id="roomCodeDisplay">----</div>
       <div class="hint2">이 코드를 친구에게 알려주세요. 접속 순서대로 자동 배정됩니다.</div>
       <button class="homeBtn secondary" id="btnCopyCode">코드 복사</button>
+    </div>
+  </div>
+
+  <div class="homeBox" id="matchmakingBox">
+    <h3>빠른 대전 (자동 매칭)</h3>
+    <div class="hint2" style="margin-bottom:8px;">코드를 주고받지 않아도 자동으로 상대를 찾아 대전을 시작합니다.</div>
+    <button class="homeBtn" id="btnMatch1v1">1대1 빠른 대전</button>
+    <button class="homeBtn" id="btnMatch2v2">2대2 빠른 대전</button>
+    <button class="homeBtn" id="btnMatchFfa3">1대1대1 빠른 대전</button>
+    <button class="homeBtn" id="btnMatchFfa4">1대1대1대1 빠른 대전</button>
+    <div id="matchmakingWaitBox" style="display:none;">
+      <div id="matchmakingStatus" class="hint2">상대를 찾는 중...</div>
+      <button class="homeBtn secondary" id="btnCancelMatch">취소</button>
     </div>
   </div>
 
@@ -589,7 +606,7 @@ function readNickname(){
   }
 }
 
-function hostRoom(mode, attempt){
+function hostRoom(mode, attempt, forcedCode){
   attempt = attempt || 0;
   readNickname();
   roomMode = mode || '1v1';
@@ -597,7 +614,7 @@ function hostRoom(mode, attempt){
   conns = {};
   roster = emptyRoster();
   roster.A1 = { nick: myNickname, char:null, ready:false };
-  const code = randCode();
+  const code = forcedCode || randCode(); // 빠른 대전(매치메이킹)에서 넘어온 경우 이미 정해진 코드를 그대로 사용
   connStatusEl.textContent = '연결 준비 중...';
   peer = new Peer('tsiege-'+code);
   peer.on('open', ()=>{
@@ -634,7 +651,7 @@ function hostRoom(mode, attempt){
     });
   });
   peer.on('error', err=>{
-    if(err.type === 'unavailable-id' && attempt < 3){ hostRoom(mode, attempt+1); return; }
+    if(err.type === 'unavailable-id' && attempt < 3){ hostRoom(mode, attempt+1, forcedCode); return; }
     connStatusEl.textContent = '방 생성 오류: ' + err.type;
   });
 }
@@ -706,6 +723,118 @@ document.getElementById('btnCopyCode').addEventListener('click', ()=>{
 document.getElementById('leaveBtn2').addEventListener('click', ()=>{ location.reload(); });
 document.getElementById('lobbyLeaveBtn').addEventListener('click', ()=>{ location.reload(); });
 
+// ==================== 빠른 대전 (매치메이킹) ====================
+// 방 코드를 직접 주고받지 않아도, 서버의 대기열(matchmaking_queue)에 들어가서 자동으로 상대를 찾아 매칭함.
+// 먼저 대기 중이던 쪽이 host, 나중에 합류해 상대의 대기 행을 "선점(claim)"한 쪽이 guest가 되어
+// 기존 PeerJS 방식(hostRoom/joinRoom) 그대로 연결됨 — 매치메이킹은 상대를 찾아주는 역할만 하고,
+// 실제 대전 통신은 지금까지와 동일하게 P2P로 이뤄짐. Supabase 연결이 안 되면(오프라인 등) 이 기능만
+// 못 쓸 뿐, 기존 방 만들기/코드로 참가는 그대로 동작함.
+let matchmakingRow = null;
+let matchmakingPollTimer = null;
+
+function setMatchmakingUI(waiting){
+  const box = document.getElementById('matchmakingWaitBox');
+  if(box) box.style.display = waiting ? 'block' : 'none';
+  ['btnMatch1v1','btnMatch2v2','btnMatchFfa3','btnMatchFfa4'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.style.display = waiting ? 'none' : '';
+  });
+}
+
+// 대기 중인 다른 사람의 큐 행을 하나 찾아서 선점(claim) 시도. 성공하면 그 행을, 실패하면 null을 반환.
+// status='waiting' 조건이 걸린 UPDATE라 동시에 여러 명이 같은 행을 노려도 딱 한 명만 성공함(DB가 race를 정리).
+async function tryClaimOpponent(mode){
+  const { data: others } = await sb.from('matchmaking_queue')
+    .select('id, room_code').eq('status', 'waiting').eq('mode', mode).neq('profile_id', myAccountId)
+    .order('created_at', { ascending: true }).limit(5);
+  for(const row of (others||[])){
+    const { data: claimed } = await sb.from('matchmaking_queue')
+      .update({ status:'matched', matched_profile_id: myAccountId })
+      .eq('id', row.id).eq('status', 'waiting').select().maybeSingle();
+    if(claimed) return claimed;
+  }
+  return null;
+}
+
+async function startMatchmaking(mode){
+  readNickname();
+  await ensureAccount();
+  if(!sb || !myAccountId){
+    log('⚠️ 빠른 대전은 서버 연결이 필요합니다 — 대신 방 만들기/코드로 참가를 이용해주세요.');
+    return;
+  }
+  setMatchmakingUI(true);
+  document.getElementById('matchmakingStatus').textContent = '상대를 찾는 중...';
+  try{
+    const claimed = await tryClaimOpponent(mode);
+    if(claimed){
+      // 이미 기다리고 있던 상대를 찾음 — 그쪽이 host이므로 나는 그 room_code로 참가(guest)
+      document.getElementById('matchmakingStatus').textContent = '상대를 찾았습니다! 접속 중...';
+      setTimeout(()=>{ joinRoom(claimed.room_code); }, 1000); // host가 peer를 열 시간을 잠깐 벌어줌
+      return;
+    }
+    // 대기 중인 상대가 없으면 내가 새로 대기열에 등록하고, 누군가 나를 선점하길 기다림(host 예정)
+    const code = randCode();
+    const { data, error } = await sb.from('matchmaking_queue')
+      .insert({ profile_id: myAccountId, mode, status:'waiting', room_code: code })
+      .select().maybeSingle();
+    if(error || !data){
+      document.getElementById('matchmakingStatus').textContent = '대기열 등록 실패 — 방 만들기를 이용해주세요.';
+      return;
+    }
+    matchmakingRow = data;
+    matchmakingPollTimer = setInterval(()=>pollMatchmaking(mode), 800);
+  }catch(e){
+    document.getElementById('matchmakingStatus').textContent = '서버 연결 실패 — 방 만들기를 이용해주세요.';
+  }
+}
+
+// 0.8초마다: (1) 누가 날 이미 선점했는지 확인 -> 있으면 host로 방을 염. (2) 아니면 나도 새로 생긴
+// 다른 대기자를 선점 시도 -> 성공하면 guest로 참가. 이렇게 양쪽 다 같은 로직으로 재시도하기 때문에
+// 두 사람이 거의 동시에 대기열에 들어가도(먼저 서로를 못 보고 지나쳐도) 다음 틱에서 반드시 매칭됨.
+async function pollMatchmaking(mode){
+  if(!matchmakingRow) return;
+  try{
+    const { data: mine } = await sb.from('matchmaking_queue').select('status').eq('id', matchmakingRow.id).maybeSingle();
+    if(!mine){ stopMatchmakingPoll(); return; }
+    if(mine.status === 'matched'){
+      const code = matchmakingRow.room_code;
+      stopMatchmakingPoll();
+      document.getElementById('matchmakingStatus').textContent = '상대를 찾았습니다! 방 여는 중...';
+      hostRoom(mode, 0, code);
+      return;
+    }
+    if(mine.status !== 'waiting'){ stopMatchmakingPoll(); return; }
+    const claimed = await tryClaimOpponent(mode);
+    if(claimed){
+      stopMatchmakingPoll();
+      const myRowId = matchmakingRow.id;
+      matchmakingRow = null;
+      try{ await sb.from('matchmaking_queue').delete().eq('id', myRowId); }catch(e){} // 중복 대기 방지
+      document.getElementById('matchmakingStatus').textContent = '상대를 찾았습니다! 접속 중...';
+      setTimeout(()=>{ joinRoom(claimed.room_code); }, 1000);
+    }
+  }catch(e){}
+}
+
+function stopMatchmakingPoll(){
+  if(matchmakingPollTimer){ clearInterval(matchmakingPollTimer); matchmakingPollTimer = null; }
+}
+
+async function cancelMatchmaking(){
+  stopMatchmakingPoll();
+  const row = matchmakingRow;
+  matchmakingRow = null;
+  setMatchmakingUI(false);
+  if(row && sb){ try{ await sb.from('matchmaking_queue').delete().eq('id', row.id); }catch(e){} }
+}
+
+document.getElementById('btnMatch1v1').addEventListener('click', ()=>{ startMatchmaking('1v1'); });
+document.getElementById('btnMatch2v2').addEventListener('click', ()=>{ startMatchmaking('2v2'); });
+document.getElementById('btnMatchFfa3').addEventListener('click', ()=>{ startMatchmaking('ffa3'); });
+document.getElementById('btnMatchFfa4').addEventListener('click', ()=>{ startMatchmaking('ffa4'); });
+document.getElementById('btnCancelMatch').addEventListener('click', ()=>{ cancelMatchmaking(); });
+
 document.getElementById('btnPractice').addEventListener('click', ()=>{
   readNickname();
   isPractice = true;
@@ -764,7 +893,10 @@ function renderCharGrid(){
     const spriteKey = CHAR_SPRITE[name];
     const b64 = (spriteKey && typeof ASSET_B64 !== 'undefined') ? ASSET_B64[spriteKey] : null;
     const iconHTML = b64 ? `<img src="data:image/png;base64,${b64}" alt="${name}">` : (def.sym||'');
-    tile.innerHTML = `<div class="sym">${iconHTML}</div><div class="nm">${name}</div><div class="desc">${def.desc||''}</div>` + (def.ready ? '' : `<div class="lockTag">준비중</div>`);
+    // 서버에 저장된 숙련도가 있으면 작은 레벨 배지를 붙임 (계정별로 캐릭터를 얼마나 플레이했는지 보여줌)
+    const masteryInfo = myCharacterMastery[name];
+    const masteryHTML = masteryInfo ? `<div class="masteryTag">Lv.${masteryLevel(masteryInfo.xp)}</div>` : '';
+    tile.innerHTML = `<div class="sym">${iconHTML}</div><div class="nm">${name}</div><div class="desc">${def.desc||''}</div>${masteryHTML}` + (def.ready ? '' : `<div class="lockTag">준비중</div>`);
     if(def.ready){
       tile.addEventListener('click', ()=>{
         if(isPractice){ practiceChar = name; }
@@ -998,8 +1130,8 @@ function loadLifetimeStats(){
   try{
     const raw = localStorage.getItem(LIFETIME_STATS_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
-    return parsed || { matches:0, wins:0, bestCombo:0, charPlays:{} };
-  }catch(e){ return { matches:0, wins:0, bestCombo:0, charPlays:{} }; }
+    return parsed || { matches:0, wins:0, bestCombo:0, charPlays:{}, mmr:1000 };
+  }catch(e){ return { matches:0, wins:0, bestCombo:0, charPlays:{}, mmr:1000 }; }
 }
 function saveLifetimeStats(s){ try{ localStorage.setItem(LIFETIME_STATS_KEY, JSON.stringify(s)); }catch(e){} }
 function recordMatchResult(won, myCombo, charName){
@@ -1026,7 +1158,7 @@ function renderLifetimeStatsBox(){
   const s = loadLifetimeStats();
   if(!s.matches){ el.textContent = '아직 기록이 없습니다 — 한 판 해보세요!'; return; }
   const fav = favoriteCharFrom(s.charPlays);
-  el.textContent = `총 ${s.matches}판 ${s.wins}승 · 최고 콤보 x${s.bestCombo||0}` + (fav ? ` · 자주 쓴 캐릭터: ${fav}` : '');
+  el.textContent = `총 ${s.matches}판 ${s.wins}승 · 최고 콤보 x${s.bestCombo||0} · MMR ${s.mmr||1000}` + (fav ? ` · 자주 쓴 캐릭터: ${fav}` : '');
 }
 renderLifetimeStatsBox(); // 홈 화면 로드 시 바로 표시
 
@@ -1104,20 +1236,69 @@ async function syncNicknameToServer(nickname){
 
 // 서버(match_history/character_mastery)에서 최신 누적 기록을 가져와 로컬 캐시(localStorage)에 덮어써서
 // 다른 기기/브라우저에서 로그인해도(같은 익명 세션이 유지되는 한) 실제 전적이 바로 보이게 함.
+// 캐릭터별 숙련도(플레이/승리/xp) 캐시 — 캐릭터 선택 화면에 레벨 배지를 그릴 때 씀
+let myCharacterMastery = {};
+function masteryLevel(xp){ return Math.floor((xp||0)/100) + 1; } // 승 30xp/패 10xp 기준 대략 3~10판마다 레벨업
+
 async function syncServerStatsToLocalCache(){
   if(!sb || !myAccountId) return;
   try{
-    const [{ data: matches, error: mErr }, { data: mastery, error: xErr }] = await Promise.all([
+    const [{ data: matches, error: mErr }, { data: mastery, error: xErr }, { data: prof, error: pErr }] = await Promise.all([
       sb.from('match_history').select('won, combo_best').eq('profile_id', myAccountId),
-      sb.from('character_mastery').select('character_name, play_count').eq('profile_id', myAccountId),
+      sb.from('character_mastery').select('character_name, play_count, win_count, xp').eq('profile_id', myAccountId),
+      sb.from('profiles').select('mmr').eq('id', myAccountId).maybeSingle(),
     ]);
     if(mErr || xErr || !matches) return;
     const s = { matches: matches.length, wins: matches.filter(m=>m.won).length,
-                bestCombo: matches.reduce((mx,m)=>Math.max(mx, m.combo_best||0), 0), charPlays: {} };
-    (mastery||[]).forEach(row=>{ s.charPlays[row.character_name] = row.play_count; });
+                bestCombo: matches.reduce((mx,m)=>Math.max(mx, m.combo_best||0), 0), charPlays: {},
+                mmr: (!pErr && prof && typeof prof.mmr==='number') ? prof.mmr : 1000 };
+    myCharacterMastery = {};
+    (mastery||[]).forEach(row=>{
+      s.charPlays[row.character_name] = row.play_count;
+      myCharacterMastery[row.character_name] = { play_count: row.play_count, win_count: row.win_count, xp: row.xp||0 };
+    });
     saveLifetimeStats(s);
     renderLifetimeStatsBox();
+    if(typeof renderCharGrid === 'function' && document.getElementById('charGrid')) renderCharGrid(); // 이미 선택화면이 열려있으면 레벨 배지 갱신
   }catch(e){}
+}
+
+// profiles.nickname은 NOT NULL + 한글 체크 제약이 있어서, 닉네임을 한 번도 입력 안 한 계정은
+// profiles 행 자체가 없을 수 있음(match_history/character_mastery가 profiles를 참조하므로 이 상태면
+// 기록 저장이 통째로 실패함). 그래서 기록을 남기기 직전에 "혹시 프로필이 없으면 임의의 게스트
+// 한글 닉네임으로라도 만들어둔다" — 닉네임을 나중에 직접 정하면 그때 정상적으로 덮어써짐.
+const GUEST_NICK_SYLLABLES = ['용','사','전','마','법','새','바','람','불','꽃','달','별','눈','비','산','강','구','름','해','풀'];
+function randomGuestNickname(){
+  let s = '';
+  for(let i=0;i<3;i++) s += GUEST_NICK_SYLLABLES[Math.floor(Math.random()*GUEST_NICK_SYLLABLES.length)];
+  return s;
+}
+async function ensureServerProfile(){
+  if(!sb) return false;
+  await ensureAccount();
+  if(!myAccountId) return false;
+  if(myServerNickname) return true;
+  for(let i=0;i<5;i++){
+    const guess = randomGuestNickname();
+    const ok = await syncNicknameToServer(guess);
+    if(ok && myServerNickname === guess) return true;
+  }
+  return false;
+}
+
+// 간단한(상대 MMR을 모르는 상태에서의) 고정폭 랭크 시스템 — 승리/패배 시 정해진 만큼 오르내림.
+// 진짜 ELO(상대 레이팅 반영)를 하려면 P2P로 상대 계정 정보를 주고받아야 하는데, 지금은 그 배선이 없어서
+// 1단계로는 이 정도의 "느슨한 랭크"만 두고, 필요하면 나중에 상대 MMR을 반영한 정식 ELO로 업그레이드.
+const MMR_WIN_DELTA = 20, MMR_LOSS_DELTA = -12, MMR_FLOOR = 0;
+async function updateMmrOnServer(won){
+  if(!sb || !myAccountId) return 0;
+  try{
+    const { data: prof } = await sb.from('profiles').select('mmr').eq('id', myAccountId).maybeSingle();
+    const currentMmr = (prof && typeof prof.mmr === 'number') ? prof.mmr : 1000;
+    const newMmr = Math.max(MMR_FLOOR, currentMmr + (won ? MMR_WIN_DELTA : MMR_LOSS_DELTA));
+    await sb.from('profiles').update({ mmr: newMmr }).eq('id', myAccountId);
+    return newMmr - currentMmr;
+  }catch(e){ return 0; }
 }
 
 async function recordMatchResultToServer(won, myCombo, charName){
@@ -1125,7 +1306,9 @@ async function recordMatchResultToServer(won, myCombo, charName){
   try{
     await ensureAccount();
     if(!myAccountId) return;
-    await sb.from('match_history').insert({ profile_id: myAccountId, character_name: charName||'', won: !!won, combo_best: myCombo||0 });
+    await ensureServerProfile(); // profiles 행이 없으면(닉네임 미설정) 게스트 닉네임으로라도 만들어둠
+    const mmrDelta = await updateMmrOnServer(won);
+    await sb.from('match_history').insert({ profile_id: myAccountId, character_name: charName||'', won: !!won, combo_best: myCombo||0, mmr_delta: mmrDelta });
     if(charName){
       const { data: existing } = await sb.from('character_mastery').select('play_count, win_count, xp').eq('profile_id', myAccountId).eq('character_name', charName).maybeSingle();
       const play_count = (existing?.play_count||0) + 1;
@@ -1133,6 +1316,9 @@ async function recordMatchResultToServer(won, myCombo, charName){
       const xp = (existing?.xp||0) + (won ? 30 : 10); // 승리 30xp / 참가 10xp — 캐릭터 숙련도의 기초값 (밸런스는 추후 조정)
       await sb.from('character_mastery').upsert({ profile_id: myAccountId, character_name: charName, play_count, win_count, xp }, { onConflict: 'profile_id,character_name' });
     }
+    await syncServerStatsToLocalCache(); // 방금 반영된 mmr/mastery를 홈 화면·캐릭터 선택 화면에 바로 반영
+    // (여기서 await해도 이 함수 자체가 recordMatchResult()에서 fire-and-forget으로 호출되므로
+    //  게임 진행에는 아무 지연도 생기지 않음 — 대신 myCharacterMastery/화면이 항상 최신 상태를 보장함)
   }catch(e){}
 }
 
