@@ -166,6 +166,11 @@
     <button class="homeBtn secondary" id="btnPractice">🤖 AI와 연습하기</button>
   </div>
 
+  <div class="homeBox" id="lifetimeStatsBox">
+    <h3>내 기록</h3>
+    <div id="lifetimeStatsText" class="hint2">아직 기록이 없습니다 — 한 판 해보세요!</div>
+  </div>
+
   <div id="connStatus"></div>
   <div class="hint2">※ 혼자 테스트하려면: 이 파일을 두 개의 브라우저 탭(또는 창)으로 열고, 한쪽에서 "방 만들기", 다른쪽에서 그 코드로 "참가하기"를 누르면 됩니다.<br>※ 이동은 ㅈ(위)/ㅁ(왼쪽)/ㄴ(아래)/ㅇ(오른쪽) 입력 후 Enter 입니다 (한글 입력기 켜진 상태에서 W/A/S/D 키 위치).</div>
   <div class="hint2" style="margin-top:14px; opacity:0.55; font-size:11px;">
@@ -951,6 +956,70 @@ function resetSuddenDeath(){
 }
 let roundOver = false, matchOver = false, matchBanner = null;
 
+// ==================== 라운드 변이(뮤테이터) ====================
+// "판마다 다 똑같이 느껴진다"는 피드백 반영 — 매 라운드 시작 시 무작위 효과 하나를 양쪽에 동일하게 적용하고
+// 배너로 알려줘서, 캐릭터/모드가 같아도 라운드마다 분위기가 달라지게 함.
+// 이미 있는 헤이스트/마나회복/피해감소 시스템을 그대로 재사용해서 새 상태값을 최소화함.
+const ROUND_MUTATORS = [
+  { id:'haste', name:'⚡ 가속의 라운드', desc:'모두의 쿨다운 회복 속도 상승', color:'#ffe066',
+    apply(w){ w.hasteTimer = 9999; w.hasteMult = 1.6; } },
+  { id:'manastorm', name:'💠 마나 폭풍', desc:'모두의 마나 회복 속도 상승', color:'#9fe3ff',
+    apply(w){ w.manaRegenTimer = 9999; w.manaRegenMult = 1.8; } },
+  { id:'ironwall', name:'🛡️ 철벽의 라운드', desc:'모두 받는 피해 15% 감소', color:'#8ec9ff',
+    apply(w){ w.dmgReduceTimer = 9999; w.dmgReduceMult = 0.85; } },
+  { id:'glasscannon', name:'💥 취약의 라운드', desc:'모두 받는 피해 15% 증가 — 짧고 화끈하게', color:'#ff6c6c',
+    apply(w){ w.dmgReduceTimer = 9999; w.dmgReduceMult = 1.15; } },
+  { id:'fullmana', name:'🎯 만석 스타트', desc:'이번 라운드는 마나를 가득 채우고 시작', color:'#ffe066',
+    apply(w){ w.mana = w.maxMana; } },
+];
+let roundMutator = null;
+function rollRoundMutator(){
+  roundMutator = ROUND_MUTATORS[Math.floor(Math.random()*ROUND_MUTATORS.length)];
+  allWizards().forEach(w=>roundMutator.apply(w));
+  matchBanner = { text: roundMutator.name, sub: roundMutator.desc, life: 3, color: roundMutator.color || '#ffe066' };
+  log(`${roundMutator.name} — ${roundMutator.desc}`);
+}
+
+// ==================== 매치 통계 + 기록(로컬 저장) ====================
+// "목표/보상이 없어서 계속 할 동기가 안 생김"이라는 피드백 반영: 매치가 끝나면 간단한 결과 요약을 보여주고,
+// 브라우저에 누적 전적(총 판수/승수/역대 최고 콤보/자주 쓴 캐릭터)을 저장해서 다음에 들어와도 이어서 보임.
+let sideDmgDealt = {}, sideBestCombo = {};
+function resetMatchStats(){ sideDmgDealt = {}; sideBestCombo = {}; }
+
+const LIFETIME_STATS_KEY = 'typesiege_lifetime_stats_v1';
+function loadLifetimeStats(){
+  try{
+    const raw = localStorage.getItem(LIFETIME_STATS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed || { matches:0, wins:0, bestCombo:0, charPlays:{} };
+  }catch(e){ return { matches:0, wins:0, bestCombo:0, charPlays:{} }; }
+}
+function saveLifetimeStats(s){ try{ localStorage.setItem(LIFETIME_STATS_KEY, JSON.stringify(s)); }catch(e){} }
+function recordMatchResult(won, myCombo, charName){
+  const s = loadLifetimeStats();
+  s.matches = (s.matches||0) + 1;
+  if(won) s.wins = (s.wins||0) + 1;
+  s.bestCombo = Math.max(s.bestCombo||0, myCombo||0);
+  s.charPlays = s.charPlays || {};
+  if(charName) s.charPlays[charName] = (s.charPlays[charName]||0) + 1;
+  saveLifetimeStats(s);
+  return s;
+}
+function favoriteCharFrom(charPlays){
+  let best = null, bestN = 0;
+  Object.keys(charPlays||{}).forEach(k=>{ if(charPlays[k]>bestN){ best = k; bestN = charPlays[k]; } });
+  return best;
+}
+function renderLifetimeStatsBox(){
+  const el = document.getElementById('lifetimeStatsText');
+  if(!el) return;
+  const s = loadLifetimeStats();
+  if(!s.matches){ el.textContent = '아직 기록이 없습니다 — 한 판 해보세요!'; return; }
+  const fav = favoriteCharFrom(s.charPlays);
+  el.textContent = `총 ${s.matches}판 ${s.wins}승 · 최고 콤보 x${s.bestCombo||0}` + (fav ? ` · 자주 쓴 캐릭터: ${fav}` : '');
+}
+renderLifetimeStatsBox(); // 홈 화면 로드 시 바로 표시
+
 // ==================== 배경 테마 (라운드마다 변화) ====================
 // 장애물: 테마당 정적 1개 + 이동형(patrol) 1개로 구성. path가 있으면 cx/cy를 중심으로
 // 사인파 왕복 이동 (axis 방향으로 amp만큼, speed는 각속도). updateObstacles()가 매 프레임 갱신.
@@ -1071,7 +1140,8 @@ function newWizard(side, x, y, charName){
            manaRegenTimer:0, manaRegenMult:1, hasteTimer:0, hasteMult:1,
            allyDmgBuffTimer:0, allyDmgBuffMult:1, hotTimer:0, hotRate:0, dotTimer:0, dotRate:0,
            stacks:0, markedTimer:0, markedBonus:1, targetLock:null, isWizard:true, slot:1,
-           comboCount:0, comboTimer:0, autoAtkCd: AUTO_ATK_INTERVAL*0.5 };
+           comboCount:0, comboTimer:0, autoAtkCd: AUTO_ATK_INTERVAL*0.5,
+           lastSkillCast:null, repeatStreak:0 };
 }
 
 // ==================== 평타 (자동 기본 공격) ====================
@@ -1172,6 +1242,24 @@ function getPassiveDmgReduceMult(w){
   const p = Object.values(w.skills).find(s=>s.type==='passive' && s.passiveDmgReduceMult);
   return p ? p.passiveDmgReduceMult : 1;
 }
+// ==================== 변주(다양성) 시스템 ====================
+// 같은 스킬 단어만 계속 치면 매판이 똑같이 느껴진다는 피드백 반영: 같은 스킬을 3연속 이상 쓰면
+// 코스트가 조금씩 비싸지고(최대 +60%), 직전과 다른 스킬로 바꿔 쓰면 코스트를 15% 할인해준다.
+// canCast류(미리보기)와 실제 시전(cast)이 정확히 같은 배율을 써야 하므로 반드시 이 함수 하나로 통일해서 계산.
+function getVarietyCostMult(wizard, name){
+  if(!wizard.lastSkillCast) return 1;
+  if(wizard.lastSkillCast === name){
+    const streak = wizard.repeatStreak||0; // 이 값은 "지금까지 연속으로 쓴 횟수"이므로 streak>=1이면 이번이 3번째 이상 연속 사용
+    if(streak >= 1) return Math.min(1 + streak*0.12, 1.6);
+    return 1;
+  }
+  return 0.85;
+}
+// 시전이 실제로 성공한 뒤에만 호출 — 다음 시전의 변주 배율 계산용 상태를 갱신함
+function recordSkillUse(wizard, name){
+  if(wizard.lastSkillCast === name) wizard.repeatStreak = (wizard.repeatStreak||0) + 1;
+  else { wizard.lastSkillCast = name; wizard.repeatStreak = 0; }
+}
 
 function otherWizard(w){ return w===wizardA ? wizardB : wizardA; } // (2대2 넉백류 로직은 enemyWizardsOf() 사용 — 아래 참조)
 
@@ -1267,9 +1355,13 @@ function hitWizard(w, dmg, ignoreShield, attackerSide, quiet){
     beep(bigHit ? 220 : 180, 0.1, 'sawtooth', bigHit ? 0.13 : 0.1);
   }
 
+  if(attackerSide && dmg>0){
+    sideDmgDealt[attackerSide] = (sideDmgDealt[attackerSide]||0) + dmg;
+  }
   if(attacker && dmg>0){
     attacker.comboCount = (attacker.comboCount||0) + 1;
     attacker.comboTimer = COMBO_WINDOW;
+    sideBestCombo[attacker.side] = Math.max(sideBestCombo[attacker.side]||0, attacker.comboCount);
     if(attacker.comboCount>=2) spawnComboText(attacker, attacker.comboCount);
   }
 }
@@ -1308,7 +1400,7 @@ function canCast(wizard, name){
   const s = wizard.skills[name];
   if(!s || s.type==='passive') return false;
   if(wizard.frozenTimer>0 || wizard.channeling) return false;
-  const cost = Math.round(s.cost*getCostMult(wizard.skills));
+  const cost = Math.round(s.cost*getCostMult(wizard.skills)*getVarietyCostMult(wizard, name));
   if(wizard.mana < cost) return false;
   if((wizard.cooldowns[name]||0) > 0) return false;
   return true;
@@ -1496,9 +1588,15 @@ function updateMeteors(dt){
 function cast(wizard, name){
   const s = wizard.skills[name];
   if(!canCast(wizard, name)) return false;
-  const cost = Math.round(s.cost*getCostMult(wizard.skills));
+  const varietyMult = getVarietyCostMult(wizard, name);
+  const cost = Math.round(s.cost*getCostMult(wizard.skills)*varietyMult);
   wizard.mana -= cost;
   wizard.cooldowns[name] = s.cd;
+  if(wizard.side===mySideLetter){
+    if(varietyMult < 0.99) log(`✨ 변주 보너스 — [${name}] 코스트 할인`);
+    else if(varietyMult > 1.05) log(`🔁 반복 사용 — [${name}] 코스트 ${Math.round((varietyMult-1)*100)}% 증가`);
+  }
+  recordSkillUse(wizard, name);
 
   const target = nearestEnemyTarget(wizard);
   const who = wizard.side===mySideLetter ? '내가' : '상대가';
@@ -1809,8 +1907,11 @@ function endRound(winnerSide){
     matchOver = true;
     const matchWinnerSide = sides.reduce((best,s)=> getRoundsWon(s)>getRoundsWon(best)?s:best, sides[0]);
     const matchWinner = nickForSide(matchWinnerSide);
-    matchBanner = { text: `🏆 ${matchWinner} 매치 승리! (${scoreTextBanner})`, sub: '리셋 버튼을 눌러 새 매치를 시작하세요', life: 999, color:'#ffe066' };
+    const myDmg = sideDmgDealt[mySideLetter]||0, myCombo = sideBestCombo[mySideLetter]||0;
+    matchBanner = { text: `🏆 ${matchWinner} 매치 승리! (${scoreTextBanner})`,
+                    sub: `내 데미지 ${myDmg} · 최고 콤보 x${myCombo} — 리셋 버튼을 눌러 새 매치를 시작하세요`, life: 999, color:'#ffe066' };
     log(`매치 종료 — ${matchWinner} 승리 (${scoreTextLog})`);
+    recordMatchResult(matchWinnerSide === mySideLetter, myCombo, myCharName);
   } else {
     matchBanner = { text: `${winnerName} 라운드 승리! (${scoreTextBanner})`, sub: '3초 후 다음 라운드 시작...', life: 3.2, color:'#9fe3ff' };
     log(`라운드 ${currentRound} 종료 — ${winnerName} 승리 (${scoreTextLog})`);
@@ -2256,6 +2357,10 @@ function handleTypeValue(forceClear){
 typeBox.addEventListener('compositionstart', ()=>{ composing = true; });
 typeBox.addEventListener('compositionend', ()=>{ composing = false; handleTypeValue(false); });
 typeBox.addEventListener('input', ()=>{ if(composing) return; handleTypeValue(false); });
+// 타이핑 게임이라 붙여넣기/드래그로 스킬어를 밖에서 가져와 입력하면 "직접 타이핑"이라는 핵심 규칙이 무너짐 -- 전부 차단
+typeBox.addEventListener('paste', (e)=>{ e.preventDefault(); });
+typeBox.addEventListener('drop', (e)=>{ e.preventDefault(); });
+typeBox.addEventListener('contextmenu', (e)=>{ e.preventDefault(); }); // 우클릭 메뉴의 "붙여넣기"도 원천 차단
 typeBox.addEventListener('keydown', (e)=>{
   if(e.key === 'Enter'){ e.preventDefault(); if(!composing) handleTypeValue(true); }
 });
@@ -2282,9 +2387,11 @@ function doReset(){
     w.allyDmgBuffTimer = 0; w.allyDmgBuffMult = 1; w.hotTimer = 0; w.hotRate = 0; w.dotTimer = 0; w.dotRate = 0;
     w.stacks = 0; w.markedTimer = 0; w.markedBonus = 1;
     w.comboCount = 0; w.comboTimer = 0;
+    w.lastSkillCast = null; w.repeatStreak = 0;
   });
   comboPopups = [];
   resetSuddenDeath();
+  rollRoundMutator();
   log('리셋됨');
 }
 
@@ -2305,7 +2412,9 @@ function beginMatch(charA, charB, nickAIn, nickBIn){
   shake = 0; logLines = []; discoveredCombos = new Set(); comboBanner = null; koBanner = null; frameCount = 0;
   comboPopups = []; resetSuddenDeath();
   resetKillsAndRounds(); currentRound = 1; roundOver = false; matchOver = false; matchBanner = null;
+  resetMatchStats();
   pickBgTheme();
+  rollRoundMutator();
 
   updateHudLabels();
   document.getElementById('roleTag').textContent = `연습모드 · ${myNickname} vs AI 봇`;
@@ -2348,7 +2457,9 @@ function beginMatchFromRoster(){
   shake = 0; logLines = []; discoveredCombos = new Set(); comboBanner = null; koBanner = null; frameCount = 0;
   comboPopups = []; resetSuddenDeath();
   resetKillsAndRounds(); currentRound = 1; roundOver = false; matchOver = false; matchBanner = null;
+  resetMatchStats();
   pickBgTheme();
+  rollRoundMutator();
 
   updateHudLabels();
   const modeLabel = matchMode==='2v2'?'2대2':matchMode==='ffa3'?'1대1대1':matchMode==='ffa4'?'1대1대1대1':'1대1';
@@ -2457,7 +2568,7 @@ function buildSnapshot(){
     comboPopups: comboPopups.map(c=>({x:c.x,y:c.y,text:c.text,life:c.life,maxLife:c.maxLife,n:c.n})),
     shake, comboBanner, koBanner, log: logLines,
     killsA, killsB, killsC, killsD, roundsWonA, roundsWonB, roundsWonC, roundsWonD, currentRound, roundOver, matchOver, matchBanner, bgTheme: currentBgTheme,
-    suddenDeath, suddenDeathDmgMult,
+    suddenDeath, suddenDeathDmgMult, sideDmgDealt, sideBestCombo,
   };
 }
 function applySnapshot(snap){
@@ -2473,8 +2584,16 @@ function applySnapshot(snap){
   shake = snap.shake; comboBanner = snap.comboBanner; koBanner = snap.koBanner;
   killsA = snap.killsA||0; killsB = snap.killsB||0; killsC = snap.killsC||0; killsD = snap.killsD||0;
   roundsWonA = snap.roundsWonA||0; roundsWonB = snap.roundsWonB||0; roundsWonC = snap.roundsWonC||0; roundsWonD = snap.roundsWonD||0;
+  const wasMatchOver = matchOver;
   currentRound = snap.currentRound||1; roundOver = !!snap.roundOver; matchOver = !!snap.matchOver; matchBanner = snap.matchBanner;
   suddenDeath = !!snap.suddenDeath; suddenDeathDmgMult = snap.suddenDeathDmgMult||1;
+  sideDmgDealt = snap.sideDmgDealt || sideDmgDealt; sideBestCombo = snap.sideBestCombo || sideBestCombo;
+  // 게스트는 스스로 endRound()를 실행하지 않으므로(호스트 권위), 스냅샷에서 matchOver가 false->true로
+  // 바뀌는 순간을 잡아 여기서 자기 기준으로 로컬 전적을 기록함 (호스트 쪽은 endRound()에서 이미 기록함)
+  if(!wasMatchOver && matchOver && role!=='host'){
+    const winnerSide = ['A','B','C','D'].reduce((best,s)=> getRoundsWon(s)>getRoundsWon(best)?s:best, 'A');
+    recordMatchResult(winnerSide === mySideLetter, sideBestCombo[mySideLetter]||0, myCharName);
+  }
   if(snap.bgTheme) currentBgTheme = snap.bgTheme;
   if(JSON.stringify(logLines) !== JSON.stringify(snap.log)){
     logLines = snap.log;
